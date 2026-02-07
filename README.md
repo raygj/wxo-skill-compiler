@@ -334,7 +334,7 @@ A: No, it's our proposal. We hope MCP community adopts it.
 
 ## License
 
-Apache License 2.0
+MIT
 
 ---
 
