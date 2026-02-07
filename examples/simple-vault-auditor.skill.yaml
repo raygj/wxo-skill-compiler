@@ -1,0 +1,110 @@
+# Example Skill: Simple Vault Auditor
+# This demonstrates the minimal skill format
+
+name: simple-vault-auditor
+version: 1.0.0
+description: "Scan Vault paths for old static secrets"
+license: Apache-2.0
+
+runtime:
+  python: "3.11"
+
+mcp_dependencies:
+  - name: vault
+    type: official
+    package: hashicorp/vault-mcp-server
+    env_vars:
+      - VAULT_ADDR
+      - VAULT_TOKEN
+
+python_dependencies:
+  - hvac>=2.1.0
+
+grounding: |
+  You audit Vault secrets for age and provide remediation recommendations.
+  
+  RISK LEVELS:
+  - CRITICAL: >365 days old
+  - HIGH: >180 days old  
+  - MEDIUM: >90 days old
+  - LOW: <90 days old
+
+agent:
+  model: "ibm/granite-3.1-8b-instruct"
+  temperature: 0.3
+  max_tokens: 1000
+
+tools:
+  - name: scan_vault_path
+    description: "Scan Vault path for static secrets older than threshold"
+    
+    inputs:
+      - name: vault_path
+        type: string
+        required: true
+        description: "Vault path to scan (e.g., secret/data/prod)"
+        example: "secret/data/prod"
+        
+      - name: min_age_days
+        type: integer
+        default: 90
+        description: "Minimum age in days to flag as risk"
+    
+    outputs:
+      type: object
+      properties:
+        total_secrets:
+          type: integer
+        old_secrets_count:
+          type: integer
+        findings:
+          type: array
+          items:
+            type: object
+    
+    implementation: |
+      # Scan Vault path
+      logging.info(f"Scanning {vault_path}")
+      
+      # This is pseudocode - compiler will generate proper structure
+      # User fills in actual logic after generation
+      
+      findings = []
+      # TODO: Use vault_mcp to list secrets
+      # TODO: Calculate ages
+      # TODO: Filter by min_age_days
+      
+      return json.dumps({
+          "total_secrets": 0,
+          "old_secrets_count": 0,
+          "findings": findings
+      })
+
+resources:
+  - name: rotation-policy
+    uri: "vault://rotation-policy"
+    type: json
+    content:
+      recommended_rotation:
+        critical: "30 days"
+        high: "90 days"
+        medium: "180 days"
+
+examples:
+  - name: "Scan production path"
+    input:
+      vault_path: "secret/data/prod"
+      min_age_days: 180
+    output:
+      total_secrets: 15
+      old_secrets_count: 7
+
+readme:
+  tagline: "Simple Vault secrets age scanner"
+  features:
+    - "Scan Vault KV paths for old secrets"
+    - "Risk categorization by age"
+    - "Rotation policy recommendations"
+  use_cases:
+    - "Quarterly security audits"
+    - "Compliance reporting"

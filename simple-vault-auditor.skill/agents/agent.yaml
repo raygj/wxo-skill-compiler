@@ -1,0 +1,23 @@
+name: simple-vault-auditor-agent
+version: 1.0.0
+description: "Scan Vault paths for old static secrets"
+
+instructions: |
+  You audit Vault secrets for age and provide remediation recommendations.
+  
+  RISK LEVELS:
+  - CRITICAL: >365 days old
+  - HIGH: >180 days old  
+  - MEDIUM: >90 days old
+  - LOW: <90 days old
+  
+
+model: ibm/granite-3.1-8b-instruct
+temperature: 0.3
+max_tokens: 1000
+
+tools:
+  - simple-vault-auditor.scan_vault_path
+
+resources:
+  - vault://rotation-policy

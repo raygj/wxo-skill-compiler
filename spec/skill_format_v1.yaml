@@ -1,0 +1,283 @@
+# Skill Definition Format Specification
+# Version: 1.0.0
+
+# This is the declarative format that compiles to watsonx Orchestrate MCP servers
+
+name: vault-secrets-auditor
+version: 1.0.0
+description: "Audit Vault secrets and generate risk-scored migration roadmap"
+
+# Author metadata (optional)
+author:
+  name: "Your Name"
+  email: "you@example.com"
+  
+# License
+license: Apache-2.0
+
+# Runtime requirements
+runtime:
+  python: "3.11"
+  
+# External MCP servers this skill depends on
+mcp_dependencies:
+  - name: vault
+    type: official  # official | community | custom
+    package: hashicorp/vault-mcp-server
+    version: ">=1.0.0"
+    env_vars:
+      - VAULT_ADDR
+      - VAULT_TOKEN
+      
+  - name: radar
+    type: official
+    package: hashicorp/vault-radar-mcp-server
+    version: ">=0.5.0"
+    env_vars:
+      - HCP_PROJECT_ID
+      - HCP_CLIENT_ID
+      - HCP_CLIENT_SECRET
+
+# Python package dependencies (beyond fastmcp)
+python_dependencies:
+  - hvac>=2.1.0
+  - python-dotenv>=1.0.0
+
+# Knowledge/grounding for the LLM agent
+grounding: |
+  You are a security expert specializing in secrets management. Your role is to:
+  1. Audit Vault secrets for static credentials
+  2. Cross-reference findings with Radar leaked secrets
+  3. Calculate risk scores based on age, exposure, and compliance requirements
+  4. Generate prioritized migration roadmaps (P0/P1/P2)
+  5. Provide ROI calculations for secret rotation initiatives
+  
+  RISK SCORING ALGORITHM:
+  - Age: +3 if >180 days, +5 if >365 days
+  - Exposure: +5 if public repo, +3 if shared Vault path
+  - Usage: +2 if high-traffic service, +4 if production
+  - Compliance: +5 if PCI/SOX scope
+  Score: 0-10 (10 = critical)
+  
+  RISK LEVELS:
+  - CRITICAL: 9-10 points (immediate action)
+  - HIGH: 7-8 points (30 days)
+  - MEDIUM: 4-6 points (90 days)
+  - LOW: 1-3 points (planned rotation)
+  
+  When responding:
+  - Always explain risk scores in business terms
+  - Prioritize findings by impact to production systems
+  - Reference compliance frameworks (PCI-DSS, SOX, HIPAA) when relevant
+  - Provide actionable next steps, not just data
+
+# Agent configuration
+agent:
+  model: "ibm/granite-3.1-8b-instruct"  # Default, user can override
+  temperature: 0.3
+  max_tokens: 2000
+  
+# Tools provided by this skill
+tools:
+  - name: audit_secrets
+    description: "Scan for static secrets and generate migration roadmap with risk scores"
+    
+    # Input schema (becomes OpenAPI parameters)
+    inputs:
+      - name: scan_targets
+        type: array
+        required: true
+        description: "List of targets to scan for secrets"
+        items:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [vault_path, git_repo, config_file]
+              description: "Type of target to scan"
+            location:
+              type: string
+              description: "Path or location to scan"
+        example:
+          - type: vault_path
+            location: "secret/data/prod"
+          - type: vault_path
+            location: "secret/data/shared"
+            
+      - name: include_radar_findings
+        type: boolean
+        default: true
+        description: "Cross-reference with Vault Radar for leaked secrets"
+    
+    # Output schema (becomes OpenAPI response)
+    outputs:
+      type: object
+      properties:
+        total_secrets:
+          type: integer
+          description: "Total number of secrets found"
+        critical_count:
+          type: integer
+          description: "Number of critical risk secrets (score 9-10)"
+        high_count:
+          type: integer
+          description: "Number of high risk secrets (score 7-8)"
+        findings:
+          type: array
+          description: "Detailed list of all secret findings"
+        risk_scores:
+          type: object
+          description: "Map of finding IDs to risk scores (0-10)"
+        migration_roadmap:
+          type: object
+          properties:
+            P0_immediate:
+              type: array
+              items:
+                type: string
+            P1_30_days:
+              type: array
+              items:
+                type: string
+            P2_90_days:
+              type: array
+              items:
+                type: string
+        estimated_savings:
+          type: object
+          properties:
+            potential_breach_cost_avoided:
+              type: string
+            secrets_requiring_rotation:
+              type: integer
+            estimated_migration_hours:
+              type: integer
+    
+    # Implementation (Python code or algorithm description)
+    implementation: |
+      # Step 1: Scan targets
+      all_findings = []
+      for target in scan_targets:
+          if target["type"] == "vault_path":
+              # Use Vault MCP to list secrets
+              secrets = vault_mcp.list_secrets(path=target["location"])
+              for secret in secrets:
+                  metadata = vault_mcp.read_metadata(path=secret)
+                  if is_static_secret(metadata):
+                      finding = {
+                          "id": generate_id(secret),
+                          "type": "vault_static",
+                          "location": secret,
+                          "age_days": calculate_age(metadata["created_time"])
+                      }
+                      all_findings.append(finding)
+      
+      # Step 2: Cross-reference with Radar (if enabled)
+      if include_radar_findings:
+          radar_events = radar_mcp.query_events(severity="critical,high")
+          all_findings.extend(radar_events)
+      
+      # Step 3: Calculate risk scores
+      risk_scores = {}
+      for finding in all_findings:
+          score = calculate_risk_score(finding)
+          finding["risk_score"] = score
+          finding["risk_level"] = assign_risk_level(score)
+          risk_scores[finding["id"]] = score
+      
+      # Step 4: Generate migration roadmap
+      roadmap = generate_migration_plan(all_findings)
+      
+      # Step 5: Calculate savings
+      savings = estimate_breach_risk_reduction(all_findings)
+      
+      # Return structured result
+      return {
+          "total_secrets": len(all_findings),
+          "critical_count": count_by_level(all_findings, "critical"),
+          "high_count": count_by_level(all_findings, "high"),
+          "findings": all_findings,
+          "risk_scores": risk_scores,
+          "migration_roadmap": roadmap,
+          "estimated_savings": savings
+      }
+      
+    # Helper functions (optional, for complex logic)
+    helpers:
+      - name: is_static_secret
+        code: |
+          def is_static_secret(metadata):
+              # Check for dynamic secret indicators
+              if metadata.get("custom_metadata", {}).get("secret_type") == "dynamic":
+                  return False
+              # If never rotated, it's static
+              if len(metadata.get("versions", {})) == 1:
+                  return True
+              return True
+              
+      - name: calculate_risk_score
+        code: |
+          def calculate_risk_score(finding):
+              score = 0
+              # Age scoring
+              if finding.get("age_days", 0) > 365:
+                  score += 5
+              elif finding.get("age_days", 0) > 180:
+                  score += 3
+              # Exposure scoring
+              if finding["type"] in ["git_repo", "radar_finding"]:
+                  score += 5
+              # Production usage
+              if finding.get("metadata", {}).get("environment") == "production":
+                  score += 4
+              # Compliance scope
+              if finding.get("metadata", {}).get("compliance_scope") in ["pci", "sox"]:
+                  score += 5
+              return min(score, 10)
+
+# MCP resources (static knowledge accessible to agents)
+resources:
+  - name: compliance-rules
+    uri: "vault://compliance-rules"
+    type: json
+    content:
+      PCI-DSS:
+        requirement_3.4: "Secrets must be rotated every 90 days"
+        requirement_8.2: "No shared credentials across environments"
+        requirement_10.2: "All secret access must be logged"
+      SOX:
+        section_404: "Separation of duties - no single person has create+delete"
+        audit_trail: "Immutable audit logs for all secret operations"
+      HIPAA:
+        "164.312": "Encryption at rest and in transit for all PHI secrets"
+        "164.308": "Access controls with least-privilege"
+
+# Examples for documentation
+examples:
+  - name: "Audit production secrets"
+    input:
+      scan_targets:
+        - type: vault_path
+          location: "secret/data/prod"
+      include_radar_findings: true
+    output:
+      total_secrets: 47
+      critical_count: 12
+      migration_roadmap:
+        P0_immediate:
+          - "secret/data/prod/database-creds"
+        P1_30_days:
+          - "secret/data/prod/api-keys"
+
+# Metadata for README generation
+readme:
+  tagline: "AI-powered Vault secrets auditing with risk scoring"
+  use_cases:
+    - "Quarterly compliance audits (PCI-DSS, SOX, HIPAA)"
+    - "Breach prevention via early detection of high-risk credentials"
+    - "Migration planning for dynamic secrets adoption"
+  features:
+    - "Risk scoring (0-10 scale) based on age, exposure, usage, compliance"
+    - "Prioritized remediation roadmap (P0/P1/P2)"
+    - "ROI calculations showing potential breach cost savings"
+    - "Integration with Vault Radar for leaked secret detection"
